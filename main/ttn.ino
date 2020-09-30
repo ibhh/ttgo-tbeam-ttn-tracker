@@ -422,6 +422,7 @@ void ttn_send(uint8_t * data, uint8_t data_size, uint8_t port, bool confirmed){
     // Prepare upstream data transmission at the next possible time.
     // Parameters are port, data, length, confirmed
     LMIC_setTxData2(port, data, data_size, confirmed ? 1 : 0);
+    Serial.printf("%d bytes long packet queued.\n", data_size);
 
     _ttn_callback(EV_QUEUED);
     count++;

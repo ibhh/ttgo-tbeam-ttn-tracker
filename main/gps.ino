@@ -68,7 +68,7 @@ static void gps_loop() {
 #if defined(PAYLOAD_USE_FULL)
 
     // More data than PAYLOAD_USE_CAYENNE
-    void buildPacket(uint8_t txBuffer[10])
+    void gps_buildPacket(uint8_t txBuffer[10])
     {
         LatitudeBinary = ((_gps.location.lat() + 90) / 180.0) * 16777215;
         LongitudeBinary = ((_gps.location.lng() + 180) / 360.0) * 16777215;
@@ -102,7 +102,7 @@ static void gps_loop() {
 #elif defined(PAYLOAD_USE_CAYENNE)
 
     // CAYENNE DF
-    void buildPacket(uint8_t txBuffer[11])
+    void gps_buildPacket(uint8_t txBuffer[11])
     {
         sprintf(t, "Lat: %f", _gps.location.lat());
         Serial.println(t);
@@ -125,4 +125,17 @@ static void gps_loop() {
         txBuffer[10] = alt;
     }
 
+#elif defined(PAYLOAD_USE_LOW_CAYENNE)
+    // CAYENNE DF
+    void gps_buildPacket()
+    {
+        lpp.addGPS(1, _gps.location.lat(), _gps.location.lng(), _gps.altitude.meters());
+        Serial.printf("Altitude: %4.1f m\n", _gps.altitude.meters());
+        // optional: send current speed, satellite count, altitude from barometric sensor and battery voltage
+        //lpp.addAnalogInput(2, kmph);
+        //Serial.printf("Speed: %2.1f kmph\n", kmph);
+        lpp.addAnalogInput(3, _gps.satellites.value());
+        Serial.printf("Sats: %d\n", _gps.satellites.value());
+        Serial.printf("Accurracy: %4.1f m\n", _gps.hdop.value());
+    }
 #endif

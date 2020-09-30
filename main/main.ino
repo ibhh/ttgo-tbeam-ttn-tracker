@@ -25,6 +25,7 @@
 #include "rom/rtc.h"
 #include <TinyGPS++.h>
 #include <Wire.h>
+#include <WiFi.h>
 
 #include "axp20x.h"
 AXP20X_Class axp;
@@ -42,17 +43,35 @@ bool packetSent, packetQueued;
 #elif defined(PAYLOAD_USE_CAYENNE)
   // CAYENNE DF
   static uint8_t txBuffer[11] = {0x03, 0x88, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+#elif defined(PAYLOAD_USE_LOW_CAYENNE)
+  #include <CayenneLPP.h>
+  CayenneLPP lpp(51); // here we will construct Cayenne Low Power Payload (LPP) - see https://community.mydevices.com/t/cayenne-lpp-2-0/7510
 #endif
 
 // deep sleep support
 RTC_DATA_ATTR int bootCount = 0;
 esp_sleep_source_t wakeCause; // the reason we booted this time
 
+// Battery Voltage
+float vBat; // battery voltage
+
+void getBatteryVoltage() {
+  // we've set 10-bit ADC resolution 2^10=1024 and voltage divider makes it half of maximum readable value (which is 3.3V)
+  vBat = analogRead(BATTERY_PIN) * 2.0 * (3.3 / 1024.0);
+}
+
 // -----------------------------------------------------------------------------
 // Application
 // -----------------------------------------------------------------------------
 
 void buildPacket(uint8_t txBuffer[]); // needed for platformio
+
+#if defined(PAYLOAD_USE_LOW_CAYENNE)
+void buildPacket() {
+  lpp.reset();
+  lpp.addAnalogInput(4, vBat);
+}
+#endif
 
 /**
  * If we have a valid position send it to the server.
@@ -68,19 +87,46 @@ bool trySend() {
     screen_print(buffer);
     snprintf(buffer, sizeof(buffer), "Longitude: %10.6f\n", gps_longitude());
     screen_print(buffer);
-    snprintf(buffer, sizeof(buffer), "Error: %4.2fm\n", gps_hdop());
+    snprintf(buffer, sizeof(buffer), "Error: %4.2f m\n", gps_hdop());
     screen_print(buffer);
+    getBatteryVoltage();
+    Serial.printf("vBat: %2.1f V\n", vBat);
+#if USE_BME280
+    getBME280Values();
+    Serial.printf("Temperature: %2.1f C\n", tmp);
+    Serial.printf("Pressure: %4.1f hPa\n", pressure);
+    Serial.printf("Approx. Altitude: %4.1f m\n", alt_barometric);
+    Serial.printf("Humidity: %2.1f %\n", hum);
+#endif
 
-    buildPacket(txBuffer);
+#if defined(PAYLOAD_USE_FULL)
+    gps_buildPacket(txBuffer);
+
+    bme_buildPacket(txBuffer);
+#elif defined(PAYLOAD_USE_CAYENNE)
+    gps_buildPacket(txBuffer);
+
+    bme_buildPacket(txBuffer);
+#elif defined(PAYLOAD_USE_LOW_CAYENNE)
+    buildPacket();
+    
+    gps_buildPacket();
+
+    bme_buildPacket();
+#endif
 
 #if LORAWAN_CONFIRMED_EVERY > 0
-    bool confirmed = (count % LORAWAN_CONFIRMED_EVERY == 0);
+    bool confirmed = (ttn_get_count() % LORAWAN_CONFIRMED_EVERY == 0);
 #else
     bool confirmed = false;
 #endif
 
     packetQueued = true;
+#if defined(PAYLOAD_USE_LOW_CAYENNE)
+    ttn_send(lpp.getBuffer(), lpp.getSize(), LORAWAN_PORT, confirmed);
+#else
     ttn_send(txBuffer, sizeof(txBuffer), LORAWAN_PORT, confirmed);
+#endif
     return true;
   }
   else {
@@ -307,6 +353,15 @@ void setup() {
   DEBUG_PORT.begin(SERIAL_BAUD);
 #endif
 
+  // set battery measurement pin
+  adcAttachPin(BATTERY_PIN);
+  adcStart(BATTERY_PIN);
+  analogReadResolution(10); // Default of 12 is not very linear. Recommended to use 10 or 11 depending on needed resolution.
+  
+  //Turn off WiFi and Bluetooth
+  WiFi.mode(WIFI_OFF);
+  btStop();
+
   initDeepSleep();
 
   Wire.begin(I2C_SDA, I2C_SCL);
@@ -319,6 +374,10 @@ void setup() {
 
 #ifdef LED_PIN
   pinMode(LED_PIN, OUTPUT);
+#endif
+
+#if USE_BME280
+  bme_setup();
 #endif
 
   // Hello
